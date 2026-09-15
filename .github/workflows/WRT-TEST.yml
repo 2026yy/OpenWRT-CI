@@ -25,6 +25,7 @@ on:
           - ROCKCHIP
           - TEST
           - X86
+          - ZN-M2-WIFI-NO
       SOURCE:
         default: 'VIKINGYFY/immortalwrt'
         required: true
