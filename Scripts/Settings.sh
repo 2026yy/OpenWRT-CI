@@ -62,3 +62,27 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 		echo "qualcommax set up nowifi successfully!"
 	fi
 fi
+
+# ZN M2 大分区 rootfs 约 96MB。Docker/Samba/OAF/科学插件会让 factory.ubi 超过 120MB，
+# U-Boot 写入不完整，开机无地址。先编能刷进去的体积，插件进系统后再用 U 盘装。
+if [[ "$WRT_CONFIG" == "ZN-M2-WIFI-NO" ]]; then
+	echo "ZN-M2: strip oversized packages so factory.ubi fits NAND"
+	cat >> ./.config <<'EOF'
+CONFIG_PACKAGE_docker=n
+CONFIG_PACKAGE_dockerd=n
+CONFIG_PACKAGE_docker-compose=n
+CONFIG_PACKAGE_luci-app-dockerman=n
+CONFIG_DOCKER_CGROUP_OPTIONS=n
+CONFIG_DOCKER_NET_MACVLAN=n
+CONFIG_DOCKER_STO_EXT4=n
+CONFIG_PACKAGE_luci-app-samba4=n
+CONFIG_PACKAGE_luci-app-oaf=n
+CONFIG_PACKAGE_luci-app-store=n
+CONFIG_PACKAGE_luci-app-homeproxy=n
+CONFIG_PACKAGE_luci-app-gecoosac=n
+CONFIG_PACKAGE_luci-app-ddns-go=n
+CONFIG_PACKAGE_luci-app-zerotier=n
+CONFIG_PACKAGE_luci-app-partexp=n
+CONFIG_PACKAGE_luci-app-mini-diskmanager=n
+EOF
+fi

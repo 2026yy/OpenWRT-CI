@@ -161,7 +161,7 @@ hp_preset_resources() (
 )
 
 HP_DIR="$(find "$PKG_PATH" -maxdepth 3 -type d -iname '*homeproxy*' -print -quit 2>/dev/null)"
-if [ -n "$HP_DIR" ]; then
+if [ -n "$HP_DIR" ] && [[ "$WRT_CONFIG" != "ZN-M2-WIFI-NO" ]]; then
 	echo " "
 	if hp_preset_resources "$HP_DIR"; then
 		echo "homeproxy data has been updated!"
