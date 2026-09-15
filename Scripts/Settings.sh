@@ -77,12 +77,15 @@ CONFIG_DOCKER_NET_MACVLAN=n
 CONFIG_DOCKER_STO_EXT4=n
 CONFIG_PACKAGE_luci-app-samba4=n
 CONFIG_PACKAGE_luci-app-oaf=n
-CONFIG_PACKAGE_luci-app-store=n
 CONFIG_PACKAGE_luci-app-homeproxy=n
 CONFIG_PACKAGE_luci-app-gecoosac=n
 CONFIG_PACKAGE_luci-app-ddns-go=n
-CONFIG_PACKAGE_luci-app-zerotier=n
 CONFIG_PACKAGE_luci-app-partexp=n
 CONFIG_PACKAGE_luci-app-mini-diskmanager=n
+# 主题与体积适中的插件保留
+CONFIG_PACKAGE_luci-app-store=y
+CONFIG_PACKAGE_luci-app-zerotier=y
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-app-argon-config=y
 EOF
 fi
