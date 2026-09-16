@@ -51,10 +51,11 @@ UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "axonhub gecoosac sing-bo
 # 带「自动允许客户端 NAT」的 Lean 风格界面；nft/fw4 规则由辅助脚本写入
 UPDATE_PACKAGE "luci-app-zerotier" "zhengmz/luci-app-zerotier" "master" "" "luci-app-zerotier"
 
-# ZN-M2：只拉主题 argon + iStore，其余大包仍不拉，控制体积
+# ZN-M2：主题 + iStore + OAF（kmod-oaf 必须进固件，无法事后在线装）
 if [[ "$WRT_CONFIG" == "ZN-M2-WIFI-NO" ]]; then
  UPDATE_PACKAGE "argon" "sbwml/luci-theme-argon" "openwrt-25.12"
  UPDATE_PACKAGE "istore" "linkease/istore" "main"
+ UPDATE_PACKAGE "open-app-filter" "destan19/OpenAppFilter" "master" "" "luci-app-appfilter luci-app-oaf oaf"
 else
  UPDATE_PACKAGE "aurora" "eamonxg/luci-theme-aurora" "master"
  UPDATE_PACKAGE "aurora-config" "eamonxg/luci-app-aurora-config" "master"

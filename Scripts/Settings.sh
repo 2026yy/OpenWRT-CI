@@ -63,10 +63,10 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 	fi
 fi
 
-# ZN M2 大分区 rootfs 约 96MB。Docker/Samba/OAF/科学插件会让 factory.ubi 超过 120MB，
-# U-Boot 写入不完整，开机无地址。先编能刷进去的体积，插件进系统后再用 U 盘装。
+# ZN M2 大分区 rootfs 约 96MB。Docker/Samba/科学插件仍不进 factory，刷后再用 U 盘装。
+# OAF 的 kmod-oaf 必须编进内核，无法事后在线安装。
 if [[ "$WRT_CONFIG" == "ZN-M2-WIFI-NO" ]]; then
-	echo "ZN-M2: strip oversized packages so factory.ubi fits NAND"
+	echo "ZN-M2: strip oversized packages so factory.ubi fits NAND; keep OAF kmod"
 	cat >> ./.config <<'EOF'
 CONFIG_PACKAGE_docker=n
 CONFIG_PACKAGE_dockerd=n
@@ -76,7 +76,9 @@ CONFIG_DOCKER_CGROUP_OPTIONS=n
 CONFIG_DOCKER_NET_MACVLAN=n
 CONFIG_DOCKER_STO_EXT4=n
 CONFIG_PACKAGE_luci-app-samba4=n
-CONFIG_PACKAGE_luci-app-oaf=n
+CONFIG_PACKAGE_luci-app-oaf=y
+CONFIG_PACKAGE_kmod-oaf=y
+CONFIG_PACKAGE_appfilter=y
 CONFIG_PACKAGE_luci-app-homeproxy=n
 CONFIG_PACKAGE_luci-app-gecoosac=n
 CONFIG_PACKAGE_luci-app-ddns-go=n
@@ -247,8 +249,37 @@ uci -q set zerotier.sample_config=zerotier
 uci -q set zerotier.sample_config.nat='1'
 # 官方示例 earth 网络默认关掉，避免误加入
 uci -q set zerotier.earth.enabled='0' 2>/dev/null || true
+# 不预置任何网络 ID，由用户在 LuCI 里填写。过短的 secret 不是合法身份，丢掉以免节点地址乱跳
+secret="$(uci -q get zerotier.global.secret || true)"
+slen=$(printf %s "$secret" | wc -c)
+if [ "$slen" -gt 0 ] && [ "$slen" -lt 80 ]; then
+	uci -q delete zerotier.global.secret
+fi
 uci -q commit zerotier
 [ -x /usr/share/zerotier/sync-uci.sh ] && /usr/share/zerotier/sync-uci.sh
+
+# ZeroTier 从 zt* 访问路由器是 INPUT，默认 drop 会拦 LuCI/SSH。
+# rfc1918_filter 会拦从 VPN 打开 192.168.x 管理页。
+uci -q set uhttpd.main.rfc1918_filter='0'
+uci -q commit uhttpd
+if ! uci -q show firewall | grep -q "name='zerotier'"; then
+	uci add firewall zone
+	uci set firewall.@zone[-1].name='zerotier'
+	uci set firewall.@zone[-1].input='ACCEPT'
+	uci set firewall.@zone[-1].output='ACCEPT'
+	uci set firewall.@zone[-1].forward='ACCEPT'
+	uci add_list firewall.@zone[-1].device='zt+'
+	uci add firewall forwarding
+	uci set firewall.@forwarding[-1].src='zerotier'
+	uci set firewall.@forwarding[-1].dest='lan'
+	uci add firewall forwarding
+	uci set firewall.@forwarding[-1].src='lan'
+	uci set firewall.@forwarding[-1].dest='zerotier'
+	uci add firewall forwarding
+	uci set firewall.@forwarding[-1].src='zerotier'
+	uci set firewall.@forwarding[-1].dest='wan'
+	uci commit firewall
+fi
 exit 0
 EOF
 chmod +x "$UCI_DEF_DIR/98-zerotier-local-nat"
@@ -265,7 +296,17 @@ find ./package ./feeds -type f -path '*luci-app-zerotier*/root/etc/init.d/luci-z
 	if ! grep -q 'sync-uci.sh' "$f"; then
 		sed -i '/^start() {/a\
 	[ -x /usr/share/zerotier/sync-uci.sh ] \&\& /usr/share/zerotier/sync-uci.sh\
-	[ -x /etc/init.d/zerotier ] \&\& /etc/init.d/zerotier restart >/dev/null 2>\&1 || true
+	[ -x /etc/init.d/zerotier ] \&\& /etc/init.d/zerotier running >/dev/null 2>\&1 || /etc/init.d/zerotier start >/dev/null 2>\&1 || true
+' "$f"
+	fi
+	# 没加入网络时没有 zt 网卡，原脚本会无限 sleep，卡死开机和 LuCI
+	if ! grep -q 'No zt device after' "$f"; then
+		sed -i '/# Wait zt tun device/a\
+	wait_n=0
+' "$f"
+		sed -i '/log "Waiting zt device/{n;a\
+		wait_n=$((wait_n + 1))\
+		[ "$wait_n" -gt 30 ] \&\& log "No zt device after 30s, skip NAT rules." \&\& return 0
 ' "$f"
 	fi
 	echo "zerotier luci init patched: $f"
