@@ -76,7 +76,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo -E apt-get -yqq update
-          sudo -E apt-get -yqq install --no-install-recommends dos2unix libfuse-dev
+          sudo -E apt-get -yqq install --no-install-recommends dos2unix libfuse-dev eatmydata
           sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
           sudo -E timedatectl set-timezone "Asia/Shanghai"
 
@@ -93,6 +93,8 @@ jobs:
           WRT_CACHE_BRANCH=${WRT_BRANCH//\//-}
           WRT_CACHE_TARGET="$WRT_TARGET-$WRT_SUBTARGET"
           WRT_CACHE_PREFIX="wrt-$WRT_CACHE_SOURCE-$WRT_CACHE_BRANCH-$WRT_CACHE_TARGET"
+          # 配置/脚本一变就换 cache 后缀，避免命中旧 key 后不写回新的 ccache
+          WRT_CACHE_CI=$(cat "./Config/"*.txt "./Scripts/"*.sh "./.github/workflows/WRT-CORE.yml" 2>/dev/null | sha256sum | awk '{print substr($1,1,12)}')
 
           {
             echo "WRT_INFO=${WRT_SOURCE%%/*}"
@@ -102,6 +104,7 @@ jobs:
             echo "WRT_SUBTARGET=$WRT_SUBTARGET"
             echo "WRT_CACHE_TARGET=$WRT_CACHE_TARGET"
             echo "WRT_CACHE_PREFIX=$WRT_CACHE_PREFIX"
+            echo "WRT_CACHE_CI=$WRT_CACHE_CI"
             echo "WRT_WIFI=wifi-yes"
             echo "WRT_KVER=none"
             echo "WRT_LIST=none"
@@ -116,13 +119,22 @@ jobs:
           cd ./wrt/
           WRT_HASH=$(git rev-parse HEAD)
           echo "WRT_HASH=$WRT_HASH" >> $GITHUB_ENV
-          echo "WRT_CACHE_KEY=$WRT_CACHE_PREFIX-$WRT_HASH" >> $GITHUB_ENV
-          echo "cache_key=$WRT_CACHE_PREFIX-$WRT_HASH" >> "$GITHUB_OUTPUT"
+          echo "WRT_CACHE_KEY=$WRT_CACHE_PREFIX-$WRT_HASH-$WRT_CACHE_CI" >> $GITHUB_ENV
+          echo "cache_key=$WRT_CACHE_PREFIX-$WRT_HASH-$WRT_CACHE_CI" >> "$GITHUB_OUTPUT"
 
           # GitHub Action 移除国内下载源
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
           if [ -f "$PROJECT_MIRRORS_FILE" ]; then
             sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
+          fi
+
+          # ZN-M2 不用 telephony/video，少两次 feeds clone
+          if [[ "$WRT_CONFIG" == "ZN-M2-WIFI-NO" ]]; then
+            for f in feeds.conf.default feeds.conf; do
+              [ -f "$f" ] || continue
+              sed -i -E '/^src-git[[:space:]]+(video|telephony)([[:space:]]|$)/s/^/# /' "$f"
+            done
+            echo "ZN-M2: skipped video/telephony feeds"
           fi
 
       - name: Check Scripts
@@ -188,7 +200,11 @@ jobs:
         run: |
           cd ./wrt/
           mkdir -p .ccache dl
-          make download -j$(nproc)
+          if command -v eatmydata >/dev/null 2>&1; then
+            eatmydata make download -j$(nproc)
+          else
+            make download -j$(nproc)
+          fi
 
       - name: Compile Firmware
         if: ${{ !inputs.WRT_TEST }}
@@ -199,7 +215,16 @@ jobs:
         run: |
           cd ./wrt/
           mkdir -p .ccache
-          make -j$(nproc) || make -j1 V=s
+          MAKE=(make)
+          command -v eatmydata >/dev/null 2>&1 && MAKE=(eatmydata make)
+
+          # qca-nss-phy 是 BUILDONLY 头文件，并行时容易踩文件尚未写完，一旦失败会整树掉到 -j1
+          if [ -d package/qca-nss/qca-nss-phy ]; then
+            echo "prebuild qca-nss-phy serially to avoid parallel race"
+            "${MAKE[@]}" package/qca-nss/qca-nss-phy/compile -j1
+          fi
+
+          "${MAKE[@]}" -j$(nproc) || "${MAKE[@]}" -j1 V=s
 
       - name: Save Build Cache
         if: ${{ !inputs.WRT_TEST && success() && steps.cache-restore.outputs.cache-hit != 'true' }}

@@ -90,6 +90,31 @@ CONFIG_PACKAGE_luci-app-ttyd=y
 CONFIG_PACKAGE_luci-app-zerotier=y
 CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-argon-config=y
+# 单机编译，不要 MULTI_PROFILE 为整平台打多份 rootfs
+CONFIG_TARGET_MULTI_PROFILE=n
+CONFIG_TARGET_PER_DEVICE_ROOTFS=n
+# 关掉内核调试信息，内核链接会快一截
+CONFIG_KERNEL_DEBUG_INFO=n
+CONFIG_KERNEL_DEBUG_KERNEL=n
+CONFIG_KERNEL_DEBUG_INFO_BTF=n
+# 这台没有 SATA/NVMe/声卡，少编一批 kmod（Docker 相关 kmod 仍保留，方便 U 盘后装）
+CONFIG_PACKAGE_kmod-ata-ahci=n
+CONFIG_PACKAGE_kmod-ata-core=n
+CONFIG_PACKAGE_kmod-nvme=n
+CONFIG_PACKAGE_libnvme=n
+CONFIG_PACKAGE_nvme-cli=n
+CONFIG_PACKAGE_kmod-sound-core=n
+CONFIG_PACKAGE_kmod-usb-audio=n
+CONFIG_PACKAGE_kmod-ovpn-backports=n
+CONFIG_PACKAGE_kmod-fs-ksmbd=n
+CONFIG_PACKAGE_kmod-bonding=n
+CONFIG_PACKAGE_proto-bonding=n
+CONFIG_PACKAGE_coremark=n
+CONFIG_PACKAGE_smartmontools=n
+CONFIG_PACKAGE_smartmontools-drivedb=n
+CONFIG_PACKAGE_mmc-utils=n
+CONFIG_PACKAGE_libimobiledevice=n
+CONFIG_PACKAGE_usbmuxd=n
 EOF
 fi
 
