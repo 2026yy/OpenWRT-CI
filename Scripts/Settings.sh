@@ -89,3 +89,54 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-argon-config=y
 EOF
 fi
+
+# 首次开机默认开启 UPnP，并把 WAN NAT 设为全锥形（需 kmod-nft-fullcone）
+UCI_DEF_DIR="./package/base-files/files/etc/uci-defaults"
+mkdir -p "$UCI_DEF_DIR"
+cat > "$UCI_DEF_DIR/99-enable-upnp-fullcone" <<'EOF'
+#!/bin/sh
+
+# Full Cone NAT
+uci -q set firewall.@defaults[0].fullcone='1'
+i=0
+while uci -q get firewall.@zone[$i] >/dev/null 2>&1; do
+	name="$(uci -q get firewall.@zone[$i].name)"
+	if [ "$name" = "wan" ]; then
+		uci -q set firewall.@zone[$i].fullcone='1'
+		uci -q set firewall.@zone[$i].fullcone4='1'
+		uci -q set firewall.@zone[$i].fullcone6='1'
+	fi
+	i=$((i + 1))
+done
+uci -q commit firewall
+
+# UPnP / NAT-PMP
+if uci -q get upnpd.config >/dev/null 2>&1; then
+	uci -q set upnpd.config.enabled='1'
+	uci -q set upnpd.config.enable_upnp='1'
+	uci -q set upnpd.config.enable_natpmp='1'
+	uci -q commit upnpd
+fi
+
+exit 0
+EOF
+chmod +x "$UCI_DEF_DIR/99-enable-upnp-fullcone"
+echo "uci-defaults: enable UPnP + fullcone NAT"
+
+# 同步改掉源码包默认配置，避免仅靠 uci-defaults 时被覆盖
+UPNP_CFG=$(find ./feeds ./package -type f -path '*/miniupnpd*/files/upnpd.config' -o -path '*/luci-app-upnp/*/upnpd' 2>/dev/null | head -n 1)
+if [ -n "$UPNP_CFG" ] && [ -f "$UPNP_CFG" ]; then
+	sed -i "s/option enabled '0'/option enabled '1'/g; s/option enable_upnp '0'/option enable_upnp '1'/g; s/option enable_natpmp '0'/option enable_natpmp '1'/g" "$UPNP_CFG"
+	grep -q "option enabled" "$UPNP_CFG" || echo "	option enabled '1'" >> "$UPNP_CFG"
+	echo "upnpd default config patched: $UPNP_CFG"
+fi
+
+FW_CFG=$(find ./package ./feeds -type f -path '*/firewall*/files/firewall.config' -o -path '*/firewall4/*/firewall' 2>/dev/null | head -n 5)
+for f in $FW_CFG; do
+	[ -f "$f" ] || continue
+	if grep -q "option fullcone" "$f" 2>/dev/null; then
+		sed -i "s/option fullcone '0'/option fullcone '1'/g" "$f"
+	elif grep -q "config defaults" "$f"; then
+		sed -i "/config defaults/,/^config /{s/option synflood_protect.*/&\n\toption fullcone '1'/}" "$f" 2>/dev/null || true
+	fi
+done
