@@ -90,14 +90,40 @@ CONFIG_PACKAGE_luci-app-argon-config=y
 EOF
 fi
 
+# 统一 netfilter：系统防火墙只用 fw4/nftables。
+# Docker/OAF 等仍可能执行 iptables 命令，必须走 iptables-nft，禁止 iptables-legacy，
+# 否则会和 fw4 各写一套规则，NAT/TPROXY/UPnP 互相覆盖。
+cat >> ./.config <<'EOF'
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_firewall=n
+CONFIG_PACKAGE_nftables-json=y
+CONFIG_PACKAGE_kmod-nft-compat=y
+CONFIG_PACKAGE_iptables-nft=y
+CONFIG_PACKAGE_ip6tables-nft=y
+CONFIG_PACKAGE_ebtables-nft=y
+CONFIG_PACKAGE_iptables-legacy=n
+CONFIG_PACKAGE_ip6tables-legacy=n
+CONFIG_PACKAGE_xtables-legacy=n
+CONFIG_PACKAGE_ebtables-legacy=n
+CONFIG_PACKAGE_miniupnpd-nftables=y
+CONFIG_PACKAGE_miniupnpd-iptables=n
+CONFIG_PACKAGE_dnsmasq=n
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_nftset=y
+EOF
+echo "netfilter: fw4 + iptables-nft, legacy iptables disabled"
+
 # 首次开机默认开启 UPnP，并把 WAN NAT 设为全锥形（需 kmod-nft-fullcone）
 UCI_DEF_DIR="./package/base-files/files/etc/uci-defaults"
 mkdir -p "$UCI_DEF_DIR"
 cat > "$UCI_DEF_DIR/99-enable-upnp-fullcone" <<'EOF'
 #!/bin/sh
 
-# Full Cone NAT
+# Full Cone NAT（nftables / kmod-nft-fullcone）
 uci -q set firewall.@defaults[0].fullcone='1'
+# nf flow offload 会绕过 TPROXY / OAF / Docker FORWARD，和混用规则一样表现为“规则加了不生效”
+uci -q set firewall.@defaults[0].flow_offloading='0'
+uci -q set firewall.@defaults[0].flow_offloading_hw='0'
 i=0
 while uci -q get firewall.@zone[$i] >/dev/null 2>&1; do
 	name="$(uci -q get firewall.@zone[$i].name)"
@@ -110,6 +136,15 @@ while uci -q get firewall.@zone[$i] >/dev/null 2>&1; do
 done
 uci -q commit firewall
 
+# Passwall / Passwall2 默认走 nft，避免再写 iptables 表
+for pkg in passwall passwall2; do
+	if uci -q get ${pkg}.@global_forwarding[0] >/dev/null 2>&1; then
+		uci -q set ${pkg}.@global_forwarding[0].use_nft='1'
+		uci -q set ${pkg}.@global_forwarding[0].prefer_nft='1'
+		uci -q commit "$pkg"
+	fi
+done
+
 # UPnP / NAT-PMP
 if uci -q get upnpd.config >/dev/null 2>&1; then
 	uci -q set upnpd.config.enabled='1'
@@ -121,7 +156,7 @@ fi
 exit 0
 EOF
 chmod +x "$UCI_DEF_DIR/99-enable-upnp-fullcone"
-echo "uci-defaults: enable UPnP + fullcone NAT"
+echo "uci-defaults: enable UPnP + fullcone NAT, nft backend, no flow offload"
 
 # 同步改掉源码包默认配置，避免仅靠 uci-defaults 时被覆盖
 UPNP_CFG=$(find ./feeds ./package -type f -path '*/miniupnpd*/files/upnpd.config' -o -path '*/luci-app-upnp/*/upnpd' 2>/dev/null | head -n 1)
@@ -139,4 +174,20 @@ for f in $FW_CFG; do
 	elif grep -q "config defaults" "$f"; then
 		sed -i "/config defaults/,/^config /{s/option synflood_protect.*/&\n\toption fullcone '1'/}" "$f" 2>/dev/null || true
 	fi
+	sed -i "s/option flow_offloading '1'/option flow_offloading '0'/g; s/option flow_offloading_hw '1'/option flow_offloading_hw '0'/g" "$f"
+done
+
+# Passwall / Passwall2 源码默认改成 nft，避免首次启动先写 iptables 规则
+find ./package ./feeds -type f \( \
+	-path '*passwall*/0_default_config' -o \
+	-path '*passwall2*/0_default_config' -o \
+	-path '*/luci-app-passwall/root/etc/config/passwall' -o \
+	-path '*/luci-app-passwall2/root/etc/config/passwall2' \
+\) 2>/dev/null | while IFS= read -r f; do
+	[ -f "$f" ] || continue
+	sed -i "s/option use_nft '0'/option use_nft '1'/g; s/option prefer_nft '0'/option prefer_nft '1'/g" "$f"
+	if grep -q "config global_forwarding" "$f" && ! grep -qE "prefer_nft|use_nft" "$f"; then
+		sed -i "/config global_forwarding/a\\	option prefer_nft '1'" "$f"
+	fi
+	echo "passwall nft backend patched: $f"
 done
