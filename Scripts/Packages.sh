@@ -48,6 +48,8 @@ UPDATE_PACKAGE() {
 
 # UPDATE_PACKAGE "包名" "项目地址" "项目分支" "pkg/name，可选，pkg为从大杂烩中单独提取包名插件；name为重命名为包名"
 UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "axonhub gecoosac sing-box luci-app-homeproxy luci-app-timewol luci-app-wolplus luci-app-wolultra"
+# 带「自动允许客户端 NAT」的 Lean 风格界面；nft/fw4 规则由辅助脚本写入
+UPDATE_PACKAGE "luci-app-zerotier" "zhengmz/luci-app-zerotier" "master" "" "luci-app-zerotier"
 
 # ZN-M2：只拉主题 argon + iStore，其余大包仍不拉，控制体积
 if [[ "$WRT_CONFIG" == "ZN-M2-WIFI-NO" ]]; then

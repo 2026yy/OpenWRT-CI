@@ -84,6 +84,7 @@ CONFIG_PACKAGE_luci-app-partexp=n
 CONFIG_PACKAGE_luci-app-mini-diskmanager=n
 # 主题与体积适中的插件保留
 CONFIG_PACKAGE_luci-app-store=y
+CONFIG_PACKAGE_luci-app-ttyd=y
 CONFIG_PACKAGE_luci-app-zerotier=y
 CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-argon-config=y
@@ -191,3 +192,82 @@ find ./package ./feeds -type f \( \
 	fi
 	echo "passwall nft backend patched: $f"
 done
+
+# ZeroTier：Lean 界面（sample_config + 自动允许客户端 NAT）对接到官方 zerotier 的 global/network
+ZT_SHARE="./package/base-files/files/usr/share/zerotier"
+mkdir -p "$ZT_SHARE"
+cat > "$ZT_SHARE/sync-uci.sh" <<'EOF'
+#!/bin/sh
+# Map luci-app-zerotier (sample_config/join/nat) to official zerotier package schema.
+
+[ -f /etc/config/zerotier ] || touch /etc/config/zerotier
+. /lib/functions.sh 2>/dev/null || exit 0
+
+enabled=0
+nat=0
+
+sync_one() {
+	local id="$1"
+	[ -n "$id" ] || return 0
+	local sec="zt_${id}"
+	uci -q set "zerotier.${sec}=network"
+	uci -q set "zerotier.${sec}.enabled=1"
+	uci -q set "zerotier.${sec}.id=$id"
+	uci -q set "zerotier.${sec}.allow_managed=1"
+	uci -q set "zerotier.${sec}.allow_global=0"
+	uci -q set "zerotier.${sec}.allow_default=0"
+	uci -q set "zerotier.${sec}.allow_dns=0"
+	if [ "$nat" = "1" ]; then
+		uci -q set "zerotier.${sec}.fw_allow_input=1"
+		uci -q set "zerotier.${sec}.fw_allow_forward=1"
+		uci -q set "zerotier.${sec}.fw_allow_masq=1"
+	fi
+}
+
+config_load zerotier
+config_get_bool enabled sample_config enabled 0
+config_get_bool nat sample_config nat 0
+
+uci -q set zerotier.global=zerotier
+uci -q set zerotier.global.enabled="$enabled"
+
+for sec in $(uci -q show zerotier | sed -n "s/^zerotier\.\(zt_[0-9a-fA-F]*\)=network$/\1/p"); do
+	uci -q delete "zerotier.$sec"
+done
+
+config_list_foreach sample_config join sync_one
+uci -q commit zerotier
+exit 0
+EOF
+chmod +x "$ZT_SHARE/sync-uci.sh"
+
+cat > "$UCI_DEF_DIR/98-zerotier-local-nat" <<'EOF'
+#!/bin/sh
+uci -q set zerotier.sample_config=zerotier
+uci -q set zerotier.sample_config.nat='1'
+# 官方示例 earth 网络默认关掉，避免误加入
+uci -q set zerotier.earth.enabled='0' 2>/dev/null || true
+uci -q commit zerotier
+[ -x /usr/share/zerotier/sync-uci.sh ] && /usr/share/zerotier/sync-uci.sh
+exit 0
+EOF
+chmod +x "$UCI_DEF_DIR/98-zerotier-local-nat"
+
+# 默认勾上「自动允许客户端 NAT」，保存后先同步官方 UCI 再启服务
+find ./package ./feeds -type f -path '*luci-app-zerotier*/luasrc/model/cbi/zerotier/settings.lua' 2>/dev/null | while IFS= read -r f; do
+	[ -f "$f" ] || continue
+	sed -i '/Flag, "nat"/,/rmempty/{s/e.default = 0/e.default = 1/}' "$f"
+	echo "zerotier Auto NAT default on: $f"
+done
+
+find ./package ./feeds -type f -path '*luci-app-zerotier*/root/etc/init.d/luci-zerotier' 2>/dev/null | while IFS= read -r f; do
+	[ -f "$f" ] || continue
+	if ! grep -q 'sync-uci.sh' "$f"; then
+		sed -i '/^start() {/a\
+	[ -x /usr/share/zerotier/sync-uci.sh ] \&\& /usr/share/zerotier/sync-uci.sh\
+	[ -x /etc/init.d/zerotier ] \&\& /etc/init.d/zerotier restart >/dev/null 2>\&1 || true
+' "$f"
+	fi
+	echo "zerotier luci init patched: $f"
+done
+echo "zerotier: Lean NAT luci + official daemon sync"
